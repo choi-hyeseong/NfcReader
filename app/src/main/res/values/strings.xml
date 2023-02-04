@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">NfcReader</string>
+    <string name="title">NFC Reader</string>
+    <string name="server_not_connected">현재 서버와 연결이 되어있지 않습니다.</string>
+    <string name="server_connected">현재 서버와 연결되어 있습니다.</string>
+    <string name="server_connect_button">서버 연결</string>
+    <string name="http">http://</string>
+
+</resources>
