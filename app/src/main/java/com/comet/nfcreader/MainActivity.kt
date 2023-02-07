@@ -1,6 +1,8 @@
 package com.comet.nfcreader
 
 import android.content.SharedPreferences
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.nfc.tech.IsoDep
@@ -44,6 +46,7 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
     private val preferences : SharedPreferences by lazy {
         applicationContext.getSharedPreferences(TAG, MODE_PRIVATE) //non root
     }
+    private val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 100) //삑소리
 
     override fun onCreate(savedInstanceState : Bundle?) {
         super.onCreate(savedInstanceState)
@@ -85,7 +88,7 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
                         transceive(buildAPDU(cardAID)) //단순한 apdu 명령 요청 및 nfc 태그(클라이언트) 의 응답 바이트. (APDU 형식)
                     //send response apdu 메소드로 보낸값도 읽을 수 있음. 그전에는 빈 데이터만
                     if (result == null || result.size < 3)
-                        return // TODO error handling (beep...)
+                        playErrorBeep() //
                     else {
                         //apdu 명령어를 제외한 데이터 긁어오기. (여기선 string을 byte로 직렬화한 데이터)
                         val strData = String(result.sliceArray(5..result.lastIndex)) //toString 사용시 역직렬화 안됨..!
@@ -95,14 +98,16 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
                             val request = Request.Builder().url("$ip/mdm/request").header("Content-Type", "application/json").post(JSONObject().put("data", strData).toString().toRequestBody()).build()
                             val response = client.newCall(request).execute() //thread
                             Log.i(TAG, strData)
-                             if (!response.isSuccessful)
-                                 Log.w(TAG, "ERROR!")// TODO error handle, 에러타입 여러게 enum으로 명시하기
+                             if (!response.isSuccessful) {
+                                 Log.w(TAG, "ERROR!")//
+                                 playErrorBeep()
+                             }
                             else {
-                                if (response.code != RESULT_OK) {
-                                    Log.i(TAG, "SUCCESS")
-                                }
+                                if (response.code != RESULT_OK)
+                                    playBeep()
                                 else {
                                     Log.w(TAG, "ERROR") //error handle
+                                    playErrorBeep()
                                 }
                             }
 
@@ -112,6 +117,7 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
                 }
                 catch (e : Exception) {
                     e.localizedMessage?.let { Log.e(TAG, it) }
+                    playErrorBeep()
                     close() //더이상 처리할 필요 X
                 }
                 finally {
@@ -145,4 +151,14 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
     private fun getData() : String {
         return preferences.getString(SERVER_IP_TAG, "")!!
     }
+
+    private fun playBeep() {
+        tone.startTone(ToneGenerator.TONE_CDMA_PIP, 150)
+    }
+
+    private fun playErrorBeep() {
+        tone.startTone(ToneGenerator.TONE_SUP_INTERCEPT, 150)
+    }
+
+
 }
