@@ -3,5 +3,8 @@
     <string name="title">NFC Reader</string>
     <string name="server_connect_button">서버 저장</string>
     <string name="http">http://</string>
+    <string name="nfc_not_support">nfc가 없는 장치입니다.</string>
+    <string name="serverip_not_initialized">서버 ip가 지정되어있지 않습니다.</string>
+    <string name="server_load_complete">서버 ip가 성공적으로 로드되었습니다.</string>
 
 </resources>

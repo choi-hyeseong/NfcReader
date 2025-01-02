@@ -1,136 +1,145 @@
 package com.comet.nfcreader
 
-import android.content.SharedPreferences
 import android.media.AudioManager
 import android.media.ToneGenerator
 import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.nfc.tech.IsoDep
 import android.os.Bundle
-import android.os.PersistableBundle
 import android.util.Log
-import android.widget.Button
-import android.widget.EditText
+import android.widget.Toast
+import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
-import java.util.concurrent.TimeUnit
+import com.comet.nfcreader.databinding.ActivityMainBinding
+import com.comet.nfcreader.reader.server.type.ResponseStatus
+import dagger.hilt.android.AndroidEntryPoint
 
-//AID = (F239856324897348, hex code (16진수, 짝수로 끝나야함.)
-val cardAID = byteArrayOf(0xF2.toByte(),
-                          0x39.toByte(),
-                          0x85.toByte(),
-                          0x63.toByte(),
-                          0x24.toByte(),
-                          0x89.toByte(),
-                          0x73.toByte(),
-                          0x48.toByte())
-
-const val SUPPORT_NFC_TYPE =
-    NfcAdapter.FLAG_READER_NFC_A.or(NfcAdapter.FLAG_READER_NFC_B).or(NfcAdapter.FLAG_READER_NFC_F)
-        .or(NfcAdapter.FLAG_READER_NFC_V).or(NfcAdapter.FLAG_READER_NFC_BARCODE)
-        .or(NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS) // or expression (비트 연산자 사용하여 지원하는 타입 명시.)
-const val TAG = "NFC_READER" //debug tag
-const val DELAY = 150 //NFC Reading period
-const val SERVER_IP_TAG = "SERVER_IP"
-const val TIMEOUT = 2L
-
+@AndroidEntryPoint
 class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
 
-    private lateinit var adapter : NfcAdapter
-    private lateinit var edit : EditText
-    private val client = OkHttpClient.Builder().connectTimeout(TIMEOUT, TimeUnit.SECONDS)
-    .readTimeout(TIMEOUT, TimeUnit.SECONDS).build()
-    private val preferences : SharedPreferences by lazy {
-        applicationContext.getSharedPreferences(TAG, MODE_PRIVATE) //non root
-    }
-    private val tone = ToneGenerator(AudioManager.STREAM_MUSIC, 100) //삑소리
+    companion object {
 
-    override fun onCreate(savedInstanceState : Bundle?) {
+        //AID = (F239856324897348, hex code (16진수, 짝수로 끝나야함.)
+        private val cardAID = byteArrayOf(
+            0xF2.toByte(),
+            0x39.toByte(),
+            0x85.toByte(),
+            0x63.toByte(),
+            0x24.toByte(),
+            0x89.toByte(),
+            0x73.toByte(),
+            0x48.toByte()
+        )
+
+        private const val SUPPORT_NFC_TYPE =
+            NfcAdapter.FLAG_READER_NFC_A.or(NfcAdapter.FLAG_READER_NFC_B)
+                .or(NfcAdapter.FLAG_READER_NFC_F)
+                .or(NfcAdapter.FLAG_READER_NFC_V).or(NfcAdapter.FLAG_READER_NFC_BARCODE)
+                .or(NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS) // or expression (비트 연산자 사용하여 지원하는 타입 명시.)
+        private const val DELAY = 150 //NFC Reading period
+    }
+
+    // NFC Adapter. 미지원 기기를 위해 nullable로 받음
+    private val adapter: NfcAdapter? by lazy { NfcAdapter.getDefaultAdapter(this) }
+    private val viewModel: MainViewModel by viewModels()
+    private val tone: ToneGenerator by lazy { ToneGenerator(AudioManager.STREAM_MUSIC, 100) } //삑소리
+
+
+    override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
+        val view = ActivityMainBinding.inflate(layoutInflater)
+        setContentView(view.root)
+
+        initView(view)
+        initObserver(view)
+    }
+
+    private fun initView(bind: ActivityMainBinding) {
         //ip 저장
-        findViewById<Button>(R.id.button).apply { setOnClickListener { saveData() } } //ip 저장
-        //불러오기
-        edit = findViewById<EditText?>(R.id.serverIP).apply { setText(getData()) }
+        bind.button.setOnClickListener {
+            viewModel.saveServerIP(bind.serverIP.text.toString())
+            Toast.makeText(this, R.string.server_load_complete, Toast.LENGTH_SHORT).show()
+        }
     }
 
-    //현재 앱이 실행중인 경우.
-    override fun onResume() {
-        super.onResume()
-        Log.i(TAG, getData())
-        //nfc 태그 리딩 딜레이. (1000 = 1s?)
-        val options = Bundle().apply { putInt(NfcAdapter.EXTRA_READER_PRESENCE_CHECK_DELAY, DELAY) }
-        adapter = NfcAdapter.getDefaultAdapter(this)
-            .also { it.enableReaderMode(this, this, SUPPORT_NFC_TYPE, options) }
-    }
+    private fun initObserver(bind: ActivityMainBinding) {
+        viewModel.serverIPLiveData.observe(this) {
+            bind.serverIP.setText(it)
+        }
 
-    //앱이 상호작용 불가능한 경우 (백그라운드 등등...)
-    override fun onPause() {
-        saveData()
-        super.onPause()
-        adapter.disableReaderMode(this)
-    }
-
-    //be called when NFC Tagging
-    override fun onTagDiscovered(tag : Tag?) {
-        //when tag isn't null.
-        tag?.let { it ->
-            Log.i(TAG, "tag read.")
-            // TODO 비 안드로이드 계열 nfc 태그 처리 로직 구현부.
-            // for android
-            IsoDep.get(it)?.run {
-                try {
-                    connect() // 리턴값 필요없으니 람다 변수 충돌 방지위한 run
-                    val result =
-                        transceive(buildAPDU(cardAID)) //단순한 apdu 명령 요청 및 nfc 태그(클라이언트) 의 응답 바이트. (APDU 형식)
-                    //send response apdu 메소드로 보낸값도 읽을 수 있음. 그전에는 빈 데이터만
-                    if (result == null || result.size < 3)
-                        playErrorBeep() //
-                    else {
-                        //apdu 명령어를 제외한 데이터 긁어오기. (여기선 string을 byte로 직렬화한 데이터)
-                        val strData = String(result.sliceArray(5..result.lastIndex)) //toString 사용시 역직렬화 안됨..!
-                         Thread {
-                            val ip = edit.text
-                            //127.0.0.1:8080/mdm/request
-                            val request = Request.Builder().url("$ip/mdm/request").header("Content-Type", "application/json").post(JSONObject().put("data", strData).toString().toRequestBody()).build()
-                            val response = client.newCall(request).execute() //thread
-                            Log.i(TAG, strData)
-                             if (!response.isSuccessful) {
-                                 Log.w(TAG, "ERROR!")//
-                                 playErrorBeep()
-                             }
-                            else {
-                                if (response.code != RESULT_OK)
-                                    playBeep()
-                                else {
-                                    Log.w(TAG, "ERROR") //error handle
-                                    playErrorBeep()
-                                }
-                            }
-
-                        }.apply { start() }
-                        // strData = (Encrypt[UUID-TIME])|Android
-                    }
-                }
-                catch (e : Exception) {
-                    e.localizedMessage?.let { Log.e(TAG, it) }
+        viewModel.responseLiveData.observe(this) { status ->
+            when (status) {
+                ResponseStatus.OK -> playBeep()
+                ResponseStatus.ERROR -> playErrorBeep()
+                ResponseStatus.DATA_NOT_INIT -> {
                     playErrorBeep()
-                    close() //더이상 처리할 필요 X
-                }
-                finally {
-
+                    Toast.makeText(this, R.string.serverip_not_initialized, Toast.LENGTH_SHORT)
+                        .show()
                 }
             }
         }
+    }
 
+    //현재 앱이 실행중인 경우.
+    override fun onStart() {
+        super.onStart()
+        startNFCListening()
+    }
 
+    //앱이 상호작용 불가능한 경우 (백그라운드 등등...)
+    override fun onStop() {
+        super.onStop()
+        stopNFCListening()
+    }
+
+    // nfc 읽기 시작
+    private fun startNFCListening() {
+        // 종료
+        if (adapter == null) {
+            Toast.makeText(this, R.string.nfc_not_support, Toast.LENGTH_SHORT).show()
+            finish()
+        }
+        val options = Bundle().apply { putInt(NfcAdapter.EXTRA_READER_PRESENCE_CHECK_DELAY, DELAY) }
+        adapter?.enableReaderMode(this, this, SUPPORT_NFC_TYPE, options)
+    }
+
+    // nfc 읽기 종료
+    private fun stopNFCListening() {
+        adapter?.disableReaderMode(this)
+    }
+
+    //be called when NFC Tagging
+    // repository로 옮기려 했으나, activity에서 수행되어야 한다고함
+    override fun onTagDiscovered(tag: Tag) {
+        //when tag isn't null.
+        val iso: IsoDep = IsoDep.get(tag) ?: return   // TODO 비 안드로이드 계열 nfc 태그 처리 로직 구현부.
+        Log.i(getClassName(), "tag read.")
+
+        kotlin.runCatching {
+            iso.connect()
+            //send response apdu 메소드로 보낸값도 읽을 수 있음. 그전에는 빈 데이터만
+            val response =
+                iso.transceive(buildAPDU(cardAID)) //단순한 apdu 명령 요청 및 nfc 태그(클라이언트) 의 응답 바이트. (APDU 형식)
+            if (response == null || response.size < 3) {
+                playErrorBeep() //실패시
+                return
+            }
+
+            // body = (Encrypt[UUID-TIME])|Android
+            val body =
+                String(response.sliceArray(5..response.lastIndex)) //toString 사용시 역직렬화 안됨..! < 짜르기
+            viewModel.requestTagging(body)
+        }.onFailure {
+            // 실패시 error
+            Log.e(getClassName(), it.message, it)
+            playErrorBeep()
+
+        }
+        iso.close() //더이상 처리할 필요 X
     }
 
     //APDU 구성 (with data(aid))
-    private fun buildAPDU(data : ByteArray) : ByteArray {
+    private fun buildAPDU(data: ByteArray): ByteArray {
         val commandApdu = ByteArray(6 + data.size)
         //apdu 구성 00A40400 + 데이터 + LE
         commandApdu[0] = 0x00.toByte() // CLA
@@ -143,14 +152,6 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         return commandApdu
     }
 
-    private fun saveData() {
-        preferences.edit().putString(
-            SERVER_IP_TAG, edit.text.toString()).commit()
-    }
-
-    private fun getData() : String {
-        return preferences.getString(SERVER_IP_TAG, "")!!
-    }
 
     private fun playBeep() {
         tone.startTone(ToneGenerator.TONE_CDMA_PIP, 150)
@@ -160,5 +161,7 @@ class MainActivity : AppCompatActivity(), NfcAdapter.ReaderCallback {
         tone.startTone(ToneGenerator.TONE_SUP_INTERCEPT, 150)
     }
 
-
 }
+
+// for logging
+fun Any.getClassName(): String = this.javaClass.simpleName
