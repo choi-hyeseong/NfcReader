@@ -13,6 +13,8 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import javax.inject.Inject
 
 @HiltViewModel
@@ -24,8 +26,11 @@ class MainViewModel @Inject constructor(
 
     // 응답용 enum
     val responseLiveData: MutableLiveData<ResponseStatus> = MutableLiveData()
-    val serverIPLiveData : MutableLiveData<String> by lazy {
-        MutableLiveData<String>().also { loadServerIP() }
+    val serverIPLiveData: MutableLiveData<String> by lazy {
+        MutableLiveData<String>().apply {
+            val ip = loadServerIP() ?: return@apply
+            value = ip
+        }
     }
 
     // 태그 요청
@@ -43,18 +48,16 @@ class MainViewModel @Inject constructor(
         }
     }
 
-    fun saveServerIP(data : String) {
+    fun saveServerIP(data: String) {
         CoroutineScope(Dispatchers.IO).launch {
             saveDataUseCase(ServerData(data))
             serverIPLiveData.postValue(data) //알림용
         }
     }
 
-    fun loadServerIP() {
-        CoroutineScope(Dispatchers.IO).launch {
-            val ip = loadDataUseCase()
-            if (ip != null)
-                serverIPLiveData.postValue(ip.serverIp)
+    private fun loadServerIP(): String? = runBlocking {
+        withContext(Dispatchers.IO) {
+            loadDataUseCase()?.serverIp
         }
     }
 }
